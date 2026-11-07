@@ -437,6 +437,18 @@ pub trait TranscriptionBackend: Send + Sync {
         Ok(())
     }
 
+    /// Like [`Self::transcribe_stream`], with an optional channel for
+    /// uncommitted live preview text (the open phrase before a pause).
+    async fn transcribe_stream_with_preview(
+        &self,
+        audio_rx: mpsc::Receiver<AudioChunk>,
+        text_tx: mpsc::Sender<String>,
+        _preview_tx: Option<tokio::sync::watch::Sender<String>>,
+        config: &TranscriptionConfig,
+    ) -> anyhow::Result<()> {
+        self.transcribe_stream(audio_rx, text_tx, config).await
+    }
+
     /// Whether this backend supports true/chunked streaming.
     ///
     /// When true, the daemon will use `transcribe_stream` during recording

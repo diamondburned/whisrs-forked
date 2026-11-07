@@ -463,6 +463,19 @@ impl PhraseSplitter {
         Some(phrase)
     }
 
+    /// Snapshot the open in-progress phrase without consuming it, if it
+    /// carries enough speech to be worth a live preview decode.
+    pub fn peek_in_progress(&self) -> Option<(Vec<i16>, bool)> {
+        if !self.in_phrase || !self.keep_phrase() {
+            return None;
+        }
+        let start = self.emit_start_frame * self.frame_len;
+        if start >= self.buffer.len() {
+            return None;
+        }
+        Some((self.buffer[start..].to_vec(), self.continuation))
+    }
+
     /// Noise gate: keep a phrase carrying at least `min_speech_frames` of
     /// speech — or any speech at all when it continues a forced cut, since
     /// speech was flowing at the cut and a short tail is real speech, not a

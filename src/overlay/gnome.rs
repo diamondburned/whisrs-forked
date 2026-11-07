@@ -29,6 +29,7 @@ use super::service::OverlayError;
 pub(super) struct GnomePill {
     pub(super) state_rx: watch::Receiver<State>,
     pub(super) level_rx: watch::Receiver<f32>,
+    pub(super) text_rx: watch::Receiver<String>,
     pub(super) theme: String,
     pub(super) position: OverlayPosition,
 }
@@ -86,6 +87,7 @@ async fn run_gnome_pill(conn: &zbus::Connection, pill: GnomePill) -> Result<(), 
     let GnomePill {
         mut state_rx,
         level_rx,
+        mut text_rx,
         theme,
         position,
     } = pill;
@@ -103,6 +105,8 @@ async fn run_gnome_pill(conn: &zbus::Connection, pill: GnomePill) -> Result<(), 
     emit_gnome_state(conn, initial_state).await?;
     let initial_level = *level_rx.borrow();
     emit_gnome_level(conn, initial_level).await?;
+    let initial_text = text_rx.borrow_and_update().clone();
+    emit_gnome_text(conn, &initial_text).await?;
 
     // Emit level at a steady ~30 Hz so the GNOME extension always has fresh
     // data, regardless of how the watch channel coalesces updates.
@@ -122,7 +126,18 @@ async fn run_gnome_pill(conn: &zbus::Connection, pill: GnomePill) -> Result<(), 
                 // the pill is hidden while idle, so it is placed before it shows.
                 emit_gnome_theme(conn, &advertised_theme).await?;
                 emit_gnome_position(conn, position).await?;
+                if state == State::Recording {
+                    let text = text_rx.borrow().clone();
+                    emit_gnome_text(conn, &text).await?;
+                }
                 emit_gnome_state(conn, state).await?;
+            }
+            changed = text_rx.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let text = text_rx.borrow_and_update().clone();
+                emit_gnome_text(conn, &text).await?;
             }
             _ = level_interval.tick() => {
                 let level = *level_rx.borrow();
@@ -255,6 +270,17 @@ async fn emit_gnome_position(
         "org.whisrs.Overlay",
         "PositionChanged",
         &position.as_str(),
+    )
+    .await
+}
+
+async fn emit_gnome_text(conn: &zbus::Connection, text: &str) -> zbus::Result<()> {
+    conn.emit_signal(
+        None::<&str>,
+        "/org/whisrs/Overlay",
+        "org.whisrs.Overlay",
+        "TextChanged",
+        &text,
     )
     .await
 }

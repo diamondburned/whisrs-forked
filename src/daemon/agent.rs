@@ -2825,6 +2825,7 @@ mod tests {
             notify: false,
             state_tx: crate::context::StateBus::new(),
             overlay_level_tx: None,
+            overlay_text_tx: None,
             overlay_enabled: false,
             #[cfg(feature = "recording")]
             recording: crate::recording::RecordingRuntime::new().0,

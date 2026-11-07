@@ -276,6 +276,8 @@ pub(crate) struct DaemonContext {
     /// Normalized microphone (and TTS playback) level for speech-reactive
     /// overlays: set when the pill overlay or the agent overlay is enabled.
     pub(crate) overlay_level_tx: Option<tokio::sync::watch::Sender<f32>>,
+    /// Live transcription text for the pill overlay.
+    pub(crate) overlay_text_tx: Option<tokio::sync::watch::Sender<String>>,
     /// `true` when the visual overlay is enabled. State-transition toasts
     /// are suppressed in that case to avoid duplicate signaling — the
     /// overlay already shows recording/transcribing state visually.

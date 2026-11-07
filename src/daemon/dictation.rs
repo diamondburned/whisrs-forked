@@ -67,6 +67,9 @@ pub(crate) async fn handle_toggle(
             };
 
             // Start recording.
+            if let Some(text_tx) = &context.overlay_text_tx {
+                let _ = text_tx.send(String::new());
+            }
             let mut capture = match AudioCaptureHandle::start_with_level_tx(
                 &context.config.audio.device,
                 context.overlay_level_tx.clone(),
@@ -116,6 +119,7 @@ pub(crate) async fn handle_toggle(
                     daemon_state: Arc::clone(&daemon_state),
                     window_tracker: Arc::clone(&context.window_tracker),
                     state_tx: context.state_tx.clone(),
+                    overlay_text_tx: context.overlay_text_tx.clone(),
                     cancel_flag: Arc::clone(&cancel_flag),
                     config,
                     window_id: window_id.clone(),
@@ -409,6 +413,9 @@ pub(crate) async fn handle_cancel(
             discard_recording_session(&mut ds);
             if let Some(level_tx) = &context.overlay_level_tx {
                 let _ = level_tx.send(0.0);
+            }
+            if let Some(text_tx) = &context.overlay_text_tx {
+                let _ = text_tx.send(String::new());
             }
             info!("cancelled recording");
             if context.notify_state() {

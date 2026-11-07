@@ -52,11 +52,12 @@ pub struct OverlayFeeds {
     pub agents: Option<AgentsFeed>,
 }
 
-/// What the pill reads: the daemon state without agent mode, and the
-/// voice level.
+/// What the pill reads: the daemon state without agent mode, the voice
+/// level, and the live transcription text.
 pub struct PillFeed {
     pub state_rx: watch::Receiver<State>,
     pub level_rx: watch::Receiver<f32>,
+    pub text_rx: watch::Receiver<String>,
     pub config: OverlayConfig,
 }
 

@@ -172,6 +172,7 @@ impl LocalWhisperBackend {
         ctx: &Arc<whisper_rs::WhisperContext>,
         mut audio_rx: mpsc::Receiver<AudioChunk>,
         text_tx: mpsc::Sender<String>,
+        preview_tx: Option<tokio::sync::watch::Sender<String>>,
         config: &TranscriptionConfig,
     ) -> anyhow::Result<()> {
         // The close profile: one user near the mic, so a TV under them is
@@ -182,18 +183,45 @@ impl LocalWhisperBackend {
             self.phrase_silence_ms,
         );
         let mut state = create_state(ctx)?;
+        const PREVIEW_INTERVAL_SAMPLES: usize = SAMPLE_RATE / 2;
+        let mut last_preview_samples: usize = 0;
 
         while let Some(chunk) = audio_rx.recv().await {
-            for phrase in splitter.feed(&chunk) {
-                state = decode_phrase(
-                    ctx,
-                    state,
-                    phrase.samples,
-                    phrase.continuation,
-                    config,
-                    &text_tx,
-                )
-                .await?;
+            let phrases = splitter.feed(&chunk);
+            if !phrases.is_empty() {
+                last_preview_samples = 0;
+                for phrase in phrases {
+                    state = decode_phrase(
+                        ctx,
+                        state,
+                        phrase.samples,
+                        phrase.continuation,
+                        config,
+                        &text_tx,
+                        preview_tx.as_ref(),
+                    )
+                    .await?;
+                }
+                continue;
+            }
+
+            if let Some(preview_tx) = &preview_tx {
+                if let Some((samples, continuation)) = splitter.peek_in_progress() {
+                    if samples.len() >= last_preview_samples + PREVIEW_INTERVAL_SAMPLES {
+                        last_preview_samples = samples.len();
+                        state = decode_preview(
+                            ctx,
+                            state,
+                            samples,
+                            continuation,
+                            config,
+                            preview_tx,
+                        )
+                        .await?;
+                    }
+                } else {
+                    last_preview_samples = 0;
+                }
             }
         }
 
@@ -207,8 +235,11 @@ impl LocalWhisperBackend {
                 phrase.continuation,
                 config,
                 &text_tx,
+                preview_tx.as_ref(),
             )
             .await?;
+        } else if let Some(preview_tx) = &preview_tx {
+            let _ = preview_tx.send(String::new());
         }
 
         Ok(())
@@ -373,7 +404,7 @@ impl LocalWhisperBackend {
         }
 
         if fits_one_decode_window(buffer.len()) {
-            decode_phrase(ctx, create_state(ctx)?, buffer, false, config, &text_tx).await?;
+            decode_phrase(ctx, create_state(ctx)?, buffer, false, config, &text_tx, None).await?;
             return Ok(());
         }
 
@@ -557,6 +588,7 @@ async fn decode_phrase(
     continuation: bool,
     config: &TranscriptionConfig,
     text_tx: &mpsc::Sender<String>,
+    preview_tx: Option<&tokio::sync::watch::Sender<String>>,
 ) -> anyhow::Result<whisper_rs::WhisperState> {
     debug!(
         "decoding phrase of {:.2}s",
@@ -594,6 +626,8 @@ async fn decode_phrase(
                 };
                 debug!("phrase produced: {:?}", text);
                 text_tx.send(text).await.ok();
+            } else if let Some(preview_tx) = preview_tx {
+                let _ = preview_tx.send(String::new());
             }
             Ok(state)
         }
@@ -606,6 +640,59 @@ async fn decode_phrase(
         }
         Err(e) => {
             warn!("whisper phrase task panicked: {e}");
+            create_state(ctx)
+        }
+    }
+}
+
+async fn decode_preview(
+    ctx: &Arc<whisper_rs::WhisperContext>,
+    mut state: whisper_rs::WhisperState,
+    mut phrase: Vec<i16>,
+    continuation: bool,
+    config: &TranscriptionConfig,
+    preview_tx: &tokio::sync::watch::Sender<String>,
+) -> anyhow::Result<whisper_rs::WhisperState> {
+    if phrase.len() < MIN_DECODE_SAMPLES {
+        phrase.resize(MIN_DECODE_SAMPLES, 0);
+    }
+
+    let samples_f32 = i16_to_f32(&phrase);
+    let lang = config.language.clone();
+    let is_multilingual = ctx.is_multilingual();
+    let prompt = config.prompt.clone().filter(|p| !p.is_empty());
+
+    match tokio::task::spawn_blocking(move || {
+        let result = run_whisper_inference(
+            &mut state,
+            &samples_f32,
+            &lang,
+            is_multilingual,
+            prompt.as_deref(),
+        );
+        (state, result)
+    })
+    .await
+    {
+        Ok((state, Ok(text))) => {
+            let text = text.trim();
+            if !text.is_empty() {
+                let text = if continuation {
+                    decapitalize_first(text)
+                } else {
+                    text.to_string()
+                };
+                let _ = preview_tx.send(text);
+            }
+            Ok(state)
+        }
+        Ok((stale, Err(e))) => {
+            warn!("whisper preview inference failed: {e}");
+            drop(stale);
+            create_state(ctx)
+        }
+        Err(e) => {
+            warn!("whisper preview task panicked: {e}");
             create_state(ctx)
         }
     }
@@ -1018,13 +1105,27 @@ impl TranscriptionBackend for LocalWhisperBackend {
         text_tx: mpsc::Sender<String>,
         config: &TranscriptionConfig,
     ) -> anyhow::Result<()> {
+        self.transcribe_stream_with_preview(audio_rx, text_tx, None, config)
+            .await
+    }
+
+    async fn transcribe_stream_with_preview(
+        &self,
+        audio_rx: mpsc::Receiver<AudioChunk>,
+        text_tx: mpsc::Sender<String>,
+        preview_tx: Option<tokio::sync::watch::Sender<String>>,
+        config: &TranscriptionConfig,
+    ) -> anyhow::Result<()> {
         let ctx = self
             .ctx
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("whisper model not loaded from {}", self.model_path))?;
 
         match self.segmentation {
-            SegmentationMode::Silence => self.stream_phrases(ctx, audio_rx, text_tx, config).await,
+            SegmentationMode::Silence => {
+                self.stream_phrases(ctx, audio_rx, text_tx, preview_tx, config)
+                    .await
+            }
             SegmentationMode::Window => self.stream_windows(ctx, audio_rx, text_tx, config).await,
             SegmentationMode::Unsegmented => {
                 self.stream_unsegmented(ctx, audio_rx, text_tx, config)

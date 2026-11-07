@@ -1,6 +1,7 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Pango from 'gi://Pango';
 import St from 'gi://St';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -12,6 +13,7 @@ const STATE_SIGNAL = 'StateChanged';
 const LEVEL_SIGNAL = 'LevelChanged';
 const THEME_SIGNAL = 'ThemeChanged';
 const POSITION_SIGNAL = 'PositionChanged';
+const TEXT_SIGNAL = 'TextChanged';
 
 const OVERLAY_WIDTH = 100;
 const OVERLAY_HEIGHT = 40;
@@ -42,15 +44,29 @@ export default class WhisrsOverlayExtension extends Extension {
         this._theme = 'carbon';
         this._placement = 'bottom-center';
 
-        this._actor = new St.Widget({
+        this._actor = new St.BoxLayout({
             style_class: 'whisrs-overlay whisrs-overlay-hidden whisrs-theme-carbon',
-            layout_manager: new Clutter.FixedLayout(),
+            vertical: false,
+            y_align: Clutter.ActorAlign.CENTER,
             reactive: false,
             visible: false,
         });
 
+        const barBlock = BAR_COUNT * BAR_W + (BAR_COUNT - 1) * BAR_GAP;
+        const maxH = OVERLAY_HEIGHT - BAR_VPAD * 2;
+        this._barsContainer = new St.Widget({
+            layout_manager: new Clutter.FixedLayout(),
+            width: barBlock,
+            height: maxH,
+            x_expand: true,
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
         this._barsBox = new St.BoxLayout({
             style_class: 'whisrs-overlay-bars',
+            width: barBlock,
+            height: maxH,
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._bars = [];
@@ -63,8 +79,18 @@ export default class WhisrsOverlayExtension extends Extension {
             this._bars.push(bar);
             this._barsBox.add_child(bar);
         }
+        this._barsContainer.add_child(this._barsBox);
 
-        this._actor.add_child(this._barsBox);
+        this._textLabel = new St.Label({
+            style_class: 'whisrs-overlay-text',
+            y_align: Clutter.ActorAlign.CENTER,
+            visible: false,
+        });
+        this._textLabel.clutter_text.single_line_mode = true;
+        this._textLabel.clutter_text.ellipsize = Pango.EllipsizeMode.START;
+
+        this._actor.add_child(this._barsContainer);
+        this._actor.add_child(this._textLabel);
         Main.uiGroup.add_child(this._actor);
 
         this._monitorsChangedId = Main.layoutManager.connect(
@@ -104,6 +130,14 @@ export default class WhisrsOverlayExtension extends Extension {
                 this._setPlacement(position);
             }
         );
+        this._textSignalId = Gio.DBus.session.signal_subscribe(
+            null, DBUS_INTERFACE, TEXT_SIGNAL, DBUS_PATH, null,
+            Gio.DBusSignalFlags.NONE,
+            (_c, _s, _p, _i, _sig, parameters) => {
+                const [text] = parameters.deep_unpack();
+                this._setText(text);
+            }
+        );
 
         this._state = 'idle';
         this._level = 0;
@@ -121,6 +155,7 @@ export default class WhisrsOverlayExtension extends Extension {
         for (const id of [
             this._signalId, this._levelSignalId,
             this._themeSignalId, this._positionSignalId,
+            this._textSignalId,
         ]) {
             if (id) Gio.DBus.session.signal_unsubscribe(id);
         }
@@ -128,6 +163,7 @@ export default class WhisrsOverlayExtension extends Extension {
         this._levelSignalId = 0;
         this._themeSignalId = 0;
         this._positionSignalId = 0;
+        this._textSignalId = 0;
 
         if (this._monitorsChangedId) {
             Main.layoutManager.disconnect(this._monitorsChangedId);
@@ -138,6 +174,8 @@ export default class WhisrsOverlayExtension extends Extension {
         this._actor = null;
         this._bars = [];
         this._barsBox = null;
+        this._barsContainer = null;
+        this._textLabel = null;
     }
 
     _setTheme(theme) {
@@ -246,36 +284,48 @@ export default class WhisrsOverlayExtension extends Extension {
         this._actor.opacity = 0;
 
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, SPAWN_OUT_MS + 20, () => {
-            if (this._state === 'idle' && this._actor) this._actor.visible = false;
+            if (this._state === 'idle' && this._actor) {
+                this._actor.visible = false;
+                this._setText('');
+            }
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    _setText(text) {
+        if (!this._actor || !this._textLabel || !this._barsContainer) return;
+        const trimmed = String(text ?? '').trim();
+        if (trimmed.length > 0) {
+            this._textLabel.text = trimmed;
+            this._textLabel.visible = true;
+            this._barsContainer.x_expand = false;
+        } else {
+            this._textLabel.text = '';
+            this._textLabel.visible = false;
+            this._barsContainer.x_expand = true;
+        }
+        this._position();
     }
 
     _position() {
         if (!this._actor) return;
 
         const monitor = Main.layoutManager.primaryMonitor;
+        this._actor.set_height(OVERLAY_HEIGHT);
+        const [, natWidth] = this._actor.get_preferred_width(OVERLAY_HEIGHT);
+        const width = Math.max(OVERLAY_WIDTH, Math.ceil(natWidth));
+
         const [vertical, horizontal] = this._placement.split('-');
-        const maxX = monitor.x + monitor.width - OVERLAY_WIDTH;
+        const maxX = monitor.x + monitor.width - width;
         const maxY = monitor.y + monitor.height - OVERLAY_HEIGHT;
         let x;
         if (horizontal === 'left') x = monitor.x + EDGE_MARGIN;
         else if (horizontal === 'right') x = maxX - EDGE_MARGIN;
-        else x = Math.floor(monitor.x + (monitor.width - OVERLAY_WIDTH) / 2);
+        else x = Math.floor(monitor.x + (monitor.width - width) / 2);
         const y = vertical === 'top' ? monitor.y + EDGE_MARGIN : maxY - EDGE_MARGIN;
         this._actor.set_position(
             Math.min(Math.max(monitor.x, x), Math.max(monitor.x, maxX)),
             Math.min(Math.max(monitor.y, y), Math.max(monitor.y, maxY)));
-        this._actor.set_size(OVERLAY_WIDTH, OVERLAY_HEIGHT);
-
-        const cy = Math.floor(OVERLAY_HEIGHT / 2);
-        const barBlock = BAR_COUNT * BAR_W + (BAR_COUNT - 1) * BAR_GAP;
-        const barsX = Math.floor((OVERLAY_WIDTH - barBlock) / 2);
-        const maxH = OVERLAY_HEIGHT - BAR_VPAD * 2;
-        if (this._barsBox) {
-            this._barsBox.set_position(barsX, cy - Math.floor(maxH / 2));
-            this._barsBox.set_size(barBlock, maxH);
-        }
     }
 
     _startAnimation() {

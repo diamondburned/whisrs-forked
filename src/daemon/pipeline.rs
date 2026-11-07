@@ -48,6 +48,30 @@ const AUDIO_GATE_MIN_MS: u64 = 300;
 /// transcript is injected instead.
 const LLM_POST_PROCESS_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[derive(Default)]
+struct OverlayLiveText {
+    committed: String,
+    preview: String,
+}
+
+impl OverlayLiveText {
+    fn combined(&self) -> String {
+        let preview = self.preview.trim();
+        if preview.is_empty() {
+            return self.committed.trim().to_string();
+        }
+        let committed = self.committed.trim();
+        if committed.is_empty() {
+            return preview.to_string();
+        }
+        if needs_space_between(committed, preview) {
+            format!("{committed} {preview}")
+        } else {
+            format!("{committed}{preview}")
+        }
+    }
+}
+
 /// Everything [`run_streaming_pipeline`] needs, bundled so the single call
 /// site (`handle_toggle`'s Idle branch in `dictation.rs`) builds one value
 /// instead of threading ~19 positional arguments.
@@ -58,6 +82,7 @@ pub(crate) struct StreamingPipelineParams {
     pub(crate) daemon_state: Arc<Mutex<DaemonState>>,
     pub(crate) window_tracker: Arc<dyn WindowTracker>,
     pub(crate) state_tx: StateBus,
+    pub(crate) overlay_text_tx: Option<tokio::sync::watch::Sender<String>>,
     pub(crate) cancel_flag: Arc<AtomicBool>,
 
     // Per-session values captured when recording started.
@@ -100,6 +125,7 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
         daemon_state,
         window_tracker,
         state_tx,
+        overlay_text_tx,
         cancel_flag,
         config,
         window_id,
@@ -143,11 +169,35 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
     // it sends by this.
     let stream_text = backend.stream_text();
 
+    let (preview_tx, preview_rx) = if overlay_text_tx.is_some() {
+        let (tx, rx) = tokio::sync::watch::channel(String::new());
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+    let live_overlay_text = Arc::new(std::sync::Mutex::new(OverlayLiveText::default()));
+    let preview_task = if let (Some(mut rx), Some(out_tx)) = (preview_rx, overlay_text_tx.clone()) {
+        let live = Arc::clone(&live_overlay_text);
+        Some(tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                let preview = rx.borrow_and_update().clone();
+                let combined = {
+                    let mut guard = live.lock().unwrap();
+                    guard.preview = preview;
+                    guard.combined()
+                };
+                let _ = out_tx.send(combined);
+            }
+        }))
+    } else {
+        None
+    };
+
     // Spawn the transcription backend.
     let config_clone = config.clone();
     let backend_task = tokio::spawn(async move {
         backend
-            .transcribe_stream(backend_rx, text_tx, &config_clone)
+            .transcribe_stream_with_preview(backend_rx, text_tx, preview_tx, &config_clone)
             .await
     });
 
@@ -167,6 +217,8 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
     // timeout below.
     let modifier_waits = Arc::new(ModifierWaitTracker::default());
     let sink_modifier_waits = Arc::clone(&modifier_waits);
+    let sink_overlay_tx = overlay_text_tx.clone();
+    let sink_live_text = Arc::clone(&live_overlay_text);
     let typing_task = tokio::spawn(async move {
         // Focus the original window before the first batch (only once).
         // Sequenced by the batcher awaiting each sink call, so a plain
@@ -192,7 +244,18 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
                 let terminal_classes = Arc::clone(&terminal_classes);
                 let cancel = Arc::clone(&sink_cancel);
                 let modifier_waits = Arc::clone(&sink_modifier_waits);
+                let overlay_tx = sink_overlay_tx.clone();
+                let live_text = Arc::clone(&sink_live_text);
                 async move {
+                    if let Some(tx) = &overlay_tx {
+                        let combined = {
+                            let mut guard = live_text.lock().unwrap();
+                            guard.committed.push_str(&text_to_type);
+                            guard.preview.clear();
+                            guard.combined()
+                        };
+                        let _ = tx.send(combined);
+                    }
                     // Under `clipboard_only` nothing is typed, so nothing is
                     // folded, as on the batch path.
                     let mut text_to_type = text_to_type;
@@ -405,6 +468,10 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
     // flag and gets the plain "nothing to cancel" error instead of a
     // "Dictation cancelled" toast followed by this session's history entry
     // and done cue.
+    if let Some(task) = preview_task {
+        task.abort();
+    }
+
     let cancelled = {
         daemon_state
             .lock()
@@ -418,6 +485,9 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
     } else {
         full_text
     };
+    if let Some(tx) = &overlay_text_tx {
+        let _ = tx.send(full_text.trim().to_string());
+    }
 
     // Notify user about streaming errors. Errors always pop, even with the
     // overlay on — the overlay can't carry the failure detail.
@@ -1309,6 +1379,9 @@ pub(crate) async fn process_recording_batch(
     // text is what this function returns, so history records what was actually
     // typed, tagged by `history_backend_tag` with whether the LLM produced it.
     let outcome = apply_llm_post_process(text, context).await;
+    if let Some(text_tx) = &context.overlay_text_tx {
+        let _ = text_tx.send(outcome.text.trim().to_string());
+    }
 
     let keys = KeystrokeSettings::from_config(&context.config.input);
     let paste = context.config.input.paste;
@@ -2219,6 +2292,7 @@ pub(crate) mod tests {
             daemon_state: Arc::clone(&daemon_state),
             window_tracker: Arc::new(whisrs::window::NoopTracker),
             state_tx: StateBus::new(),
+            overlay_text_tx: None,
             cancel_flag: Arc::clone(&cancel_flag),
             config: build_transcription_config(&config, "en"),
             window_id: None,
@@ -2692,6 +2766,7 @@ pub(crate) mod tests {
             notify: false,
             state_tx: StateBus::new(),
             overlay_level_tx: None,
+            overlay_text_tx: None,
             overlay_enabled: false,
             #[cfg(feature = "recording")]
             recording: crate::recording::RecordingRuntime::new().0,

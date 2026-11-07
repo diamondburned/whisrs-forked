@@ -142,6 +142,7 @@ async fn main() -> Result<()> {
     // shows on its own overlay (`StateBus`).
     let state_tx = crate::context::StateBus::new();
     let (overlay_level_tx, overlay_level_rx) = tokio::sync::watch::channel(0.0_f32);
+    let (overlay_text_tx, overlay_text_rx) = tokio::sync::watch::channel(String::new());
     // Recording status has its own channel, read by the tray only: a recording
     // must not animate the overlay or fire the dictation hooks.
     #[cfg(feature = "recording")]
@@ -170,6 +171,7 @@ async fn main() -> Result<()> {
         notify,
         state_tx,
         overlay_level_tx: (overlay_enabled || agent_overlay_enabled).then_some(overlay_level_tx),
+        overlay_text_tx: overlay_enabled.then_some(overlay_text_tx),
         overlay_enabled,
         #[cfg(feature = "recording")]
         recording: recording_runtime,
@@ -299,6 +301,7 @@ async fn main() -> Result<()> {
             pill: overlay_enabled.then(|| whisrs::overlay::PillFeed {
                 state_rx: context.state_tx.subscribe_ui(),
                 level_rx: overlay_level_rx.clone(),
+                text_rx: overlay_text_rx.clone(),
                 config: overlay_config,
             }),
             agents: agent_overlay_enabled.then(|| whisrs::overlay::AgentsFeed {
@@ -708,6 +711,7 @@ mod tests {
             notify: false,
             state_tx: crate::context::StateBus::new(),
             overlay_level_tx: None,
+            overlay_text_tx: None,
             overlay_enabled: false,
             #[cfg(feature = "recording")]
             recording: crate::recording::RecordingRuntime::new().0,
@@ -868,6 +872,7 @@ mod tests {
             notify: false,
             state_tx: crate::context::StateBus::new(),
             overlay_level_tx: None,
+            overlay_text_tx: None,
             overlay_enabled: false,
             agents: crate::agent::AgentRuntime::disabled(),
             agent_board: tokio::sync::watch::channel(Vec::new()).0,

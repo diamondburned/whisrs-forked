@@ -71,6 +71,7 @@ pub fn spawn_overlays(feeds: OverlayFeeds) -> AgentOverlayShown {
         let gnome_pill = pill.as_ref().map(|p| GnomePill {
             state_rx: p.state_rx.clone(),
             level_rx: p.level_rx.clone(),
+            text_rx: p.text_rx.clone(),
             theme: p.config.theme.clone(),
             position: p.config.position(),
         });
@@ -107,6 +108,7 @@ fn spawn_pill(feed: PillFeed, backend: OverlayBackend) {
     let PillFeed {
         mut state_rx,
         mut level_rx,
+        text_rx: _text_rx,
         config,
     } = feed;
     let (tx, rx) = mpsc::channel::<State>();
