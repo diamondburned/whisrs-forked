@@ -8,6 +8,18 @@
   speak. type. done.
 ```
 
+# whisrs (forked)
+
+This is a personal fork of [`y0sif/whisrs`](https://github.com/y0sif/whisrs) with live transcription text rendering inside the GNOME Shell overlay pill.
+
+## Changes from upstream
+
+- **GNOME overlay D-Bus `TextChanged` signal**: `src/overlay/gnome.rs` and `src/daemon/pipeline.rs` broadcast live transcription text over `org.whisrs.Overlay` (`/org/whisrs/Overlay`), combining committed streaming batches with uncommitted in-progress preview text and clearing on session start or cancel.
+- **Uncommitted phrase previews for `local-whisper`**: `PhraseSplitter::peek_in_progress` and `TranscriptionBackend::transcribe_stream_with_preview` decode the open speech phrase every 500 ms before a silence boundary is reached so words appear in the overlay while speaking, not only after pausing.
+- **Dynamic GNOME Shell overlay pill**: `contrib/gnome-shell-extension/whisrs-overlay@eresende.github` subscribes to `TextChanged`, expands the pill horizontally around a start-ellipsized `St.Label` beside the 7-bar audio waveform, and declares GNOME Shell `50` compatibility in `metadata.json`.
+
+---
+
 # whisrs
 
 [![Crates.io](https://img.shields.io/crates/v/whisrs)](https://crates.io/crates/whisrs)
