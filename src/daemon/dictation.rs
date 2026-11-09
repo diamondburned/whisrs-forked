@@ -439,6 +439,12 @@ pub(crate) async fn handle_cancel(
             if let Some(cancel) = ds.streaming_cancel.take() {
                 cancel.store(true, Ordering::SeqCst);
             }
+            if let Some(level_tx) = &context.overlay_level_tx {
+                let _ = level_tx.send(0.0);
+            }
+            if let Some(text_tx) = &context.overlay_text_tx {
+                let _ = text_tx.send(String::new());
+            }
             info!("cancelled streaming session after stop; discarding untyped text");
             if context.notify_state() {
                 send_notification("whisrs", "Dictation cancelled");

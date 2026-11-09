@@ -488,13 +488,7 @@ pub(crate) async fn run_streaming_pipeline(
         task.abort();
     }
 
-    let cancelled = {
-        daemon_state
-            .lock()
-            .await
-            .release_streaming_cancel(&cancel_flag);
-        cancel_flag.load(Ordering::SeqCst)
-    };
+    let mut cancelled = cancel_flag.load(Ordering::SeqCst);
     let full_text = if cancelled {
         info!("streaming session cancelled after stop; discarding its transcript");
         String::new()
@@ -504,73 +498,91 @@ pub(crate) async fn run_streaming_pipeline(
 
     let outcome = if let Some((llm_config, instruction)) = &llm_post_process {
         if !full_text.trim().is_empty() && !cancelled {
-            let mut outcome =
-                apply_llm_post_process_with(full_text, llm_config, instruction, notify_error).await;
+            let cancel_monitor = Arc::clone(&cancel_flag);
+            let mut outcome = tokio::select! {
+                res = apply_llm_post_process_with(full_text, llm_config, instruction, notify_error) => res,
+                _ = async {
+                    while !cancel_monitor.load(Ordering::SeqCst) {
+                        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                    }
+                } => {
+                    info!("streaming session cancelled during LLM post-processing; discarding text");
+                    DictationOutcome::raw(String::new())
+                }
+            };
+
+            cancelled = cancel_flag.load(Ordering::SeqCst);
+            if cancelled {
+                outcome.text.clear();
+            }
+
             if let Some(tx) = &overlay_text_tx {
                 let _ = tx.send(outcome.text.trim().to_string());
             }
 
-            if !clipboard_only {
-                if let Some(wid) = window_id.as_deref() {
-                    if let Err(e) = window_tracker.focus_window(wid) {
-                        warn!("failed to restore window focus: {e}");
-                    } else {
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if !cancelled && !outcome.text.is_empty() {
+                if !clipboard_only {
+                    if let Some(wid) = window_id.as_deref() {
+                        if let Err(e) = window_tracker.focus_window(wid) {
+                            warn!("failed to restore window focus: {e}");
+                        } else {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        }
                     }
                 }
-            }
 
-            let is_terminal = if paste {
-                is_terminal_window(
-                    window_tracker.get_focused_window_class().as_deref(),
-                    &terminal_classes,
-                )
-            } else {
-                false
-            };
-
-            if let Some(sanitized) = owned(sanitize_for_injection(&outcome.text)) {
-                outcome.text = sanitized;
-            }
-            if !clipboard_only {
-                let at_terminal = || {
-                    if paste {
-                        is_terminal
-                    } else {
-                        is_terminal_window(
-                            window_tracker.get_focused_window_class().as_deref(),
-                            &terminal_classes,
-                        )
-                    }
+                let is_terminal = if paste {
+                    is_terminal_window(
+                        window_tracker.get_focused_window_class().as_deref(),
+                        &terminal_classes,
+                    )
+                } else {
+                    false
                 };
-                if let Some(folded) = owned(fold_line_breaks_at_terminal(&outcome.text, at_terminal))
-                {
-                    warn!("folded line breaks in dictation: the focused window is a terminal");
-                    outcome.text = folded;
-                }
-            }
 
-            let text_clone = outcome.text.clone();
-            match tokio::task::spawn_blocking(move || {
-                inject_text(
-                    &text_clone,
-                    is_terminal,
-                    keys,
-                    paste,
-                    clipboard_fallback,
-                    clipboard_only,
-                )
-            })
-            .await
-            {
-                Ok(Ok(Injection::Delivered)) => {}
-                Ok(Ok(Injection::CopiedForHeldModifier(copied))) => {
-                    if notify_error {
-                        notify_copied_for_held_modifier(&copied);
+                if let Some(sanitized) = owned(sanitize_for_injection(&outcome.text)) {
+                    outcome.text = sanitized;
+                }
+                if !clipboard_only {
+                    let at_terminal = || {
+                        if paste {
+                            is_terminal
+                        } else {
+                            is_terminal_window(
+                                window_tracker.get_focused_window_class().as_deref(),
+                                &terminal_classes,
+                            )
+                        }
+                    };
+                    if let Some(folded) = owned(fold_line_breaks_at_terminal(&outcome.text, at_terminal))
+                    {
+                        warn!("folded line breaks in dictation: the focused window is a terminal");
+                        outcome.text = folded;
                     }
                 }
-                Ok(Err(e)) => warn!("failed to inject text: {e:#}"),
-                Err(e) => warn!("failed to join injection task: {e}"),
+
+                let text_clone = outcome.text.clone();
+                match tokio::task::spawn_blocking(move || {
+                    inject_text(
+                        &text_clone,
+                        is_terminal,
+                        keys,
+                        paste,
+                        clipboard_fallback,
+                        clipboard_only,
+                    )
+                })
+                .await
+                {
+                    Ok(Ok(Injection::Delivered)) => {}
+                    Ok(Ok(Injection::CopiedForHeldModifier(copied))) => {
+                        if notify_error {
+                            notify_copied_for_held_modifier(&copied);
+                        }
+                    }
+                    Ok(Err(e)) => warn!("failed to inject text: {e:#}"),
+                    Err(e) => warn!("failed to join injection task: {e}"),
+                }
             }
 
             outcome
@@ -586,6 +598,11 @@ pub(crate) async fn run_streaming_pipeline(
         }
         DictationOutcome::raw(full_text)
     };
+
+    daemon_state
+        .lock()
+        .await
+        .release_streaming_cancel(&cancel_flag);
 
     // Notify user about streaming errors. Errors always pop, even with the
     // overlay on — the overlay can't carry the failure detail.
