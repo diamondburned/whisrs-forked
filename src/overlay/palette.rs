@@ -59,12 +59,26 @@ impl Palette {
         }
     }
 
+    /// Marika Aoki palette: forest-jade surface, mint recording bar,
+    /// chartreuse transcribing bar, emerald speaking bar, mint glow.
+    pub const fn marika() -> Self {
+        Self {
+            bg: [235, 9, 21, 16],            // #091510 @ 92%
+            ring: [115, 110, 224, 176],      // #6EE0B0 @ 45%
+            rec_bar: [255, 110, 224, 176],   // #6EE0B0 mint
+            trans_bar: [255, 212, 236, 120], // #D4EC78 chartreuse
+            speak_bar: [255, 123, 225, 115], // #7BE173 emerald
+            glow: [96, 110, 224, 176],       // #6EE0B0 glow
+        }
+    }
+
     /// The palette of `cfg`'s theme, with `[overlay.colors]` applied when the
     /// theme is `custom`.
     pub fn from_config(cfg: &OverlayConfig) -> Self {
         let base = match cfg.theme.as_str() {
             "carbon" => Self::carbon(),
             "cyan" => Self::cyan(),
+            "marika" => Self::marika(),
             "ember" | "custom" => Self::ember(),
             other => {
                 warn!("unknown overlay theme {other:?}, falling back to ember");

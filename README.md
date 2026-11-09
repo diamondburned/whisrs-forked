@@ -16,7 +16,8 @@ This is a personal fork of [`y0sif/whisrs`](https://github.com/y0sif/whisrs) wit
 
 - **GNOME overlay D-Bus `TextChanged` signal**: `src/overlay/gnome.rs` and `src/daemon/pipeline.rs` broadcast live transcription text over `org.whisrs.Overlay` (`/org/whisrs/Overlay`), combining committed streaming batches with uncommitted in-progress preview text and clearing on session start or cancel.
 - **Uncommitted phrase previews for `local-whisper`**: `PhraseSplitter::peek_in_progress` and `TranscriptionBackend::transcribe_stream_with_preview` decode the open speech phrase every 500 ms before a silence boundary is reached so words appear in the overlay while speaking, not only after pausing.
-- **Dynamic GNOME Shell overlay pill**: `contrib/gnome-shell-extension/whisrs-overlay@eresende.github` subscribes to `TextChanged`, expands the pill horizontally around a start-ellipsized `St.Label` beside the 7-bar audio waveform, and declares GNOME Shell `50` compatibility in `metadata.json`.
+- **Streaming + LLM post-processing**: when `[general] llm_post_process = true` is paired with a streaming backend such as `local-whisper`, live phrases and previews stream to the overlay during recording while deferring cursor injection until recording stops and `apply_llm_post_process` rewrites the full transcript.
+- **Multi-line `marika`-themed GNOME Shell overlay**: `contrib/gnome-shell-extension/whisrs-overlay@eresende.github` renders multi-line wrapped live dictation text (`overlay.js` dynamically imported with cache-busting on `enable()` for hot reloading without logging out), positioned higher from the bottom edge, and adds the glowy `marika` theme (`#091510` forest-jade, `#6ee0b0` mint, `#d4ec78` chartreuse, `#daf9e5` text).
 
 ---
 

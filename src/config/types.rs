@@ -2418,32 +2418,6 @@ impl Config {
                         .to_string(),
                 });
             }
-
-            // Same backend list as the `[input] paste` warning above — both
-            // the matched set and the recommended replacements, and for the
-            // same reasons (see the note there on the unimplemented stubs).
-            // With these, dictation never reaches the batch path, so there is
-            // never a whole transcript to post-process. local-whisper belongs
-            // here even though its `transcribe()` is a real batch path (which
-            // is why the llm_commands warning below excludes it) — dictation
-            // with it streams unless `segmentation = "none"`. Unlike
-            // llm_commands there is no degraded mode: the flag does nothing
-            // at all.
-            if self.dictation_streams(backend) {
-                warnings.push(ConfigWarning {
-                    message: format!(
-                        "[general] llm_post_process = true does not apply to dictation with \
-                         backend = \"{backend}\": streaming backends (deepgram-streaming, \
-                         openai-realtime, openai-compatible-realtime, local-whisper) type text \
-                         incrementally as it arrives, so there is never a whole transcript to \
-                         post-process. Nothing runs — dictation is typed unmodified. Switch to \
-                         a non-streaming backend (deepgram, groq, openai, asr-sidecar) to \
-                         post-process dictation, or use an [[llm_commands]] hotkey, which \
-                         works whatever the backend.{}",
-                        Self::local_whisper_batch_hint(backend)
-                    ),
-                });
-            }
         }
 
         if !self.llm_commands.is_empty() {

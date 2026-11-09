@@ -14,8 +14,8 @@ use crate::injection::KeystrokeSettings;
 use crate::notify::{send_notification, truncate_preview};
 use crate::pipeline::{
     build_transcription_config, format_no_microphone_error, history_backend_tag,
-    process_recording_batch, run_streaming_pipeline, save_history_entry, DictationOutcome,
-    StreamingPipelineParams,
+    llm_post_process_instruction, process_recording_batch, run_streaming_pipeline,
+    save_history_entry, StreamingPipelineParams,
 };
 #[cfg(feature = "recording")]
 use crate::recording::{refuse_while_recording, DictationStart};
@@ -136,19 +136,31 @@ pub(crate) async fn handle_toggle(
                     keys: KeystrokeSettings::from_config(&context.config.input),
                     clipboard_fallback: context.config.input.clipboard_fallback,
                     clipboard_only: context.config.input.clipboard_only,
+                    paste: context.config.input.paste,
                     terminal_classes: context.config.input.terminal_classes.clone(),
                     history: context.config.general.history,
+                    llm_post_process: llm_post_process_instruction(&context.config).map(
+                        |instruction| {
+                            (
+                                context.config.llm.clone().unwrap_or_default(),
+                                instruction.to_string(),
+                            )
+                        },
+                    ),
                 };
 
+                let defer_focus = params.llm_post_process.is_some();
                 let task = tokio::spawn(run_streaming_pipeline(params));
 
                 ds.streaming_task = Some(task);
                 ds.streaming_cancel = Some(cancel_flag);
 
                 // Focus the window now (so text goes to the right place from the start).
-                if let Some(wid) = &wid_for_focus {
-                    if let Err(e) = context.window_tracker.focus_window(wid) {
-                        warn!("failed to pre-focus window: {e}");
+                if !defer_focus {
+                    if let Some(wid) = &wid_for_focus {
+                        if let Err(e) = context.window_tracker.focus_window(wid) {
+                            warn!("failed to pre-focus window: {e}");
+                        }
                     }
                 }
             }
@@ -256,12 +268,7 @@ pub(crate) async fn handle_toggle(
                             tokio::task::spawn_blocking(move || drop(cap));
                         }
                         match task.await {
-                            // Never post-processed: the streaming pipeline
-                            // types partials as they arrive, so there is no
-                            // whole transcript to hand the LLM.
-                            // `Config::validate` warns when `llm_post_process`
-                            // is paired with a streaming backend.
-                            Ok(Ok(text)) => Ok(DictationOutcome::raw(text)),
+                            Ok(Ok(outcome)) => Ok(outcome),
                             Ok(Err(e)) => Err(e),
                             Err(e) => Err(anyhow::anyhow!("streaming task panicked: {e}")),
                         }

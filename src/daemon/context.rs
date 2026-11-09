@@ -52,7 +52,7 @@ pub(crate) struct DaemonState {
     /// The window that was focused when recording started.
     pub(crate) recording_window_id: Option<String>,
     /// Handle to the background streaming pipeline (if active).
-    pub(crate) streaming_task: Option<tokio::task::JoinHandle<Result<String>>>,
+    pub(crate) streaming_task: Option<tokio::task::JoinHandle<Result<crate::pipeline::DictationOutcome>>>,
     /// Cancel flag for the active streaming pipeline.
     ///
     /// Aborting `streaming_task` only drops the outer pipeline future — the

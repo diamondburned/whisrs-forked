@@ -109,16 +109,25 @@ pub(crate) struct StreamingPipelineParams {
     /// `[input] clipboard_only`: copy-only dictation — the transcript is
     /// written to the clipboard and never typed at the cursor.
     pub(crate) clipboard_only: bool,
+    /// `[input] paste`: paste via clipboard on stop when `llm_post_process`
+    /// defers injection to the end of the session.
+    pub(crate) paste: bool,
     /// `[input] terminal_classes`, for folding line breaks in deltas typed
     /// into a terminal ([`fold_line_breaks_at_terminal`]).
     pub(crate) terminal_classes: Vec<String>,
     /// `[general] history`: save the transcript for `whisrs log`.
     pub(crate) history: bool,
+    /// `[general] llm_post_process`: when `Some`, live text is shown on the
+    /// overlay during recording, then rewritten by the LLM on stop and injected
+    /// in one shot.
+    pub(crate) llm_post_process: Option<(llm::LlmConfig, String)>,
 }
 
 /// The streaming pipeline: reads audio in real-time, sends to API, types text.
 /// Also monitors for silence auto-stop.
-pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> Result<String> {
+pub(crate) async fn run_streaming_pipeline(
+    params: StreamingPipelineParams,
+) -> Result<DictationOutcome> {
     let StreamingPipelineParams {
         mut audio_rx,
         backend,
@@ -142,8 +151,10 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
         keys,
         clipboard_fallback,
         clipboard_only,
+        paste,
         terminal_classes,
         history,
+        llm_post_process,
     } = params;
     // State-progress toasts are noise when the overlay is on.
     let notify_state = notify && !overlay_enabled;
@@ -205,6 +216,9 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
     // We collect deltas for a short window to avoid creating a new virtual
     // keyboard for every single word delta from the streaming API.
     let wid = window_id.clone();
+    let typing_tracker = Arc::clone(&window_tracker);
+    let typing_terminal_classes = terminal_classes.clone();
+    let defer_injection = llm_post_process.is_some();
     let typing_cancel = Arc::clone(&cancel_flag);
     // Second handle on the same flag: `typing_cancel` is moved into the
     // batcher, and the clipboard write below still has to know whether the
@@ -229,7 +243,7 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
         // without one never reads the window class (see
         // `fold_line_breaks_at_terminal`).
         let at_terminal = Arc::new(std::sync::OnceLock::<bool>::new());
-        let terminal_classes = Arc::new(terminal_classes);
+        let terminal_classes = Arc::new(typing_terminal_classes);
         let full_text = run_typing_batcher(
             text_rx,
             stream_text,
@@ -238,7 +252,7 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
             replacer,
             move |text_to_type| {
                 let wid = wid.clone();
-                let tracker = Arc::clone(&window_tracker);
+                let tracker = Arc::clone(&typing_tracker);
                 let focused = Arc::clone(&focused);
                 let at_terminal = Arc::clone(&at_terminal);
                 let terminal_classes = Arc::clone(&terminal_classes);
@@ -256,10 +270,10 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
                         };
                         let _ = tx.send(combined);
                     }
-                    // Under `clipboard_only` nothing is typed, so nothing is
-                    // folded, as on the batch path.
+                    // Under `clipboard_only` or deferred LLM post-processing,
+                    // nothing is typed incrementally during recording.
                     let mut text_to_type = text_to_type;
-                    if !clipboard_only {
+                    if !clipboard_only && !defer_injection {
                         // Focus the original window (only once, or re-focus if needed).
                         if !focused.swap(true, Ordering::SeqCst) {
                             if let Some(wid) = &wid {
@@ -319,14 +333,16 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
         )
         .await;
 
-        write_streaming_clipboard(
-            &full_text,
-            clipboard_fallback,
-            clipboard_only,
-            clipboard_cancel.load(Ordering::SeqCst),
-            Arc::from(xkb_type::default_clipboard()),
-        )
-        .await;
+        if !defer_injection {
+            write_streaming_clipboard(
+                &full_text,
+                clipboard_fallback,
+                clipboard_only,
+                clipboard_cancel.load(Ordering::SeqCst),
+                Arc::from(xkb_type::default_clipboard()),
+            )
+            .await;
+        }
 
         full_text
     });
@@ -485,15 +501,97 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
     } else {
         full_text
     };
-    if let Some(tx) = &overlay_text_tx {
-        let _ = tx.send(full_text.trim().to_string());
-    }
+
+    let outcome = if let Some((llm_config, instruction)) = &llm_post_process {
+        if !full_text.trim().is_empty() && !cancelled {
+            let mut outcome =
+                apply_llm_post_process_with(full_text, llm_config, instruction, notify_error).await;
+            if let Some(tx) = &overlay_text_tx {
+                let _ = tx.send(outcome.text.trim().to_string());
+            }
+
+            if !clipboard_only {
+                if let Some(wid) = window_id.as_deref() {
+                    if let Err(e) = window_tracker.focus_window(wid) {
+                        warn!("failed to restore window focus: {e}");
+                    } else {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                }
+            }
+
+            let is_terminal = if paste {
+                is_terminal_window(
+                    window_tracker.get_focused_window_class().as_deref(),
+                    &terminal_classes,
+                )
+            } else {
+                false
+            };
+
+            if let Some(sanitized) = owned(sanitize_for_injection(&outcome.text)) {
+                outcome.text = sanitized;
+            }
+            if !clipboard_only {
+                let at_terminal = || {
+                    if paste {
+                        is_terminal
+                    } else {
+                        is_terminal_window(
+                            window_tracker.get_focused_window_class().as_deref(),
+                            &terminal_classes,
+                        )
+                    }
+                };
+                if let Some(folded) = owned(fold_line_breaks_at_terminal(&outcome.text, at_terminal))
+                {
+                    warn!("folded line breaks in dictation: the focused window is a terminal");
+                    outcome.text = folded;
+                }
+            }
+
+            let text_clone = outcome.text.clone();
+            match tokio::task::spawn_blocking(move || {
+                inject_text(
+                    &text_clone,
+                    is_terminal,
+                    keys,
+                    paste,
+                    clipboard_fallback,
+                    clipboard_only,
+                )
+            })
+            .await
+            {
+                Ok(Ok(Injection::Delivered)) => {}
+                Ok(Ok(Injection::CopiedForHeldModifier(copied))) => {
+                    if notify_error {
+                        notify_copied_for_held_modifier(&copied);
+                    }
+                }
+                Ok(Err(e)) => warn!("failed to inject text: {e:#}"),
+                Err(e) => warn!("failed to join injection task: {e}"),
+            }
+
+            outcome
+        } else {
+            if let Some(tx) = &overlay_text_tx {
+                let _ = tx.send(String::new());
+            }
+            DictationOutcome::raw(full_text)
+        }
+    } else {
+        if let Some(tx) = &overlay_text_tx {
+            let _ = tx.send(full_text.trim().to_string());
+        }
+        DictationOutcome::raw(full_text)
+    };
 
     // Notify user about streaming errors. Errors always pop, even with the
     // overlay on — the overlay can't carry the failure detail.
     if let Some(err_msg) = &stream_error {
         if notify_error && !cancelled {
-            if full_text.is_empty() {
+            if outcome.text.is_empty() {
                 send_notification("whisrs", &format!("Transcription error: {err_msg}"));
             } else {
                 send_notification(
@@ -508,7 +606,7 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
     // was, as a batch skip does (a voice the level floors rejected is "too
     // quiet", with its level). Audio the detector accepted speech in is not
     // why, so that stays a log line.
-    if full_text.is_empty() && stream_error.is_none() && !cancelled {
+    if outcome.text.is_empty() && stream_error.is_none() && !cancelled {
         let skip = match too_quiet {
             Some(levels) => Some((GateReason::TooQuiet, levels)),
             None => quality::stream_skip_reason(config.vad, &stream_levels, heard_speech)
@@ -527,9 +625,15 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
     }
 
     // Save to history if we got any text.
-    if !full_text.is_empty() {
+    if !outcome.text.is_empty() {
         let duration_secs = pipeline_start.elapsed().as_secs_f64();
-        save_history_entry(history, &full_text, &backend_name, &language, duration_secs);
+        save_history_entry(
+            history,
+            &outcome.text,
+            &history_backend_tag(&backend_name, outcome.post_processed),
+            &language,
+            duration_secs,
+        );
     }
 
     // If auto-stop happened, we need to transition to Idle.
@@ -548,14 +652,14 @@ pub(crate) async fn run_streaming_pipeline(params: StreamingPipelineParams) -> R
             feedback::play_done(audio_feedback_volume);
         }
         if notify_state && !cancelled {
-            let preview = truncate_preview(&full_text, 77);
+            let preview = truncate_preview(&outcome.text, 77);
             if !preview.is_empty() {
                 send_notification("whisrs", &format!("Done: {preview}"));
             }
         }
     }
 
-    Ok(full_text)
+    Ok(outcome)
 }
 
 /// Batches streaming text deltas and hands them to `sink` (the key injector
@@ -1187,7 +1291,7 @@ pub(crate) fn take_saved_recoveries() -> Vec<usize> {
 /// the instruction is blank" — an empty instruction buys a round trip and a
 /// non-deterministic rewrite for nothing. `Config::validate` warns about the
 /// second case at startup.
-fn llm_post_process_instruction(config: &Config) -> Option<&str> {
+pub(crate) fn llm_post_process_instruction(config: &Config) -> Option<&str> {
     if !config.general.llm_post_process {
         return None;
     }
@@ -1286,25 +1390,34 @@ pub(crate) async fn apply_llm_post_process(
         return DictationOutcome::raw(text);
     };
 
-    info!(
-        "llm post-processing: sending {} chars to the LLM",
-        text.len()
-    );
     // Same resolution as command mode: an absent [llm] section falls back to
     // the defaults, where an empty api_key sends `rewrite_text` to the
     // WHISRS_OPENAI_API_KEY / WHISRS_GROQ_API_KEY env vars.
     let llm_config = context.config.llm.clone().unwrap_or_default();
+    apply_llm_post_process_with(text, &llm_config, instruction, context.notify_error()).await
+}
+
+pub(crate) async fn apply_llm_post_process_with(
+    text: String,
+    llm_config: &llm::LlmConfig,
+    instruction: &str,
+    notify_error: bool,
+) -> DictationOutcome {
+    info!(
+        "llm post-processing: sending {} chars to the LLM",
+        text.len()
+    );
 
     let rewritten = match tokio::time::timeout(
         LLM_POST_PROCESS_TIMEOUT,
-        llm::rewrite_text(&llm_config, &text, instruction),
+        llm::rewrite_text(llm_config, &text, instruction),
     )
     .await
     {
         Ok(Ok(rewritten)) => {
             if rewritten.trim().is_empty() {
                 warn!("llm post-processing returned empty text — injecting the raw transcript");
-                if context.notify_error() {
+                if notify_error {
                     send_notification(
                         "whisrs",
                         "LLM post-processing returned nothing — typing the raw transcript",
@@ -1316,7 +1429,7 @@ pub(crate) async fn apply_llm_post_process(
         Ok(Err(e)) => {
             let friendly = format_api_error(&e);
             error!("llm post-processing failed: {e:#}");
-            if context.notify_error() {
+            if notify_error {
                 send_notification(
                     "whisrs",
                     &format!("LLM post-processing failed: {friendly}\nTyping the raw transcript"),
@@ -1327,7 +1440,7 @@ pub(crate) async fn apply_llm_post_process(
         Err(_elapsed) => {
             let secs = LLM_POST_PROCESS_TIMEOUT.as_secs();
             error!("llm post-processing timed out after {secs}s");
-            if context.notify_error() {
+            if notify_error {
                 send_notification(
                     "whisrs",
                     &format!(
@@ -2309,8 +2422,10 @@ pub(crate) mod tests {
             keys: KeystrokeSettings::from_config(&config.input),
             clipboard_fallback: false,
             clipboard_only: true,
+            paste: false,
             terminal_classes: Vec::new(),
             history: true,
+            llm_post_process: None,
         }));
         let mut stopped = None;
         for (c, chunk) in samples.chunks(800).enumerate() {
@@ -2332,11 +2447,11 @@ pub(crate) mod tests {
         }
         // The capture's channel closes, as a stopped capture's does.
         drop(tx);
-        let text = pipeline.await.unwrap().unwrap();
+        let outcome = pipeline.await.unwrap().unwrap();
         let ds = daemon_state.lock().await;
         StreamingRun {
             stopped,
-            text,
+            text: outcome.text,
             cancelled: cancel_flag.load(Ordering::SeqCst),
             released: ds.streaming_cancel.is_none(),
             state: ds.state_machine.state(),

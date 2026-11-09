@@ -95,7 +95,7 @@ async fn run_gnome_pill(conn: &zbus::Connection, pill: GnomePill) -> Result<(), 
     // knows the named themes it ships. Fall back to "ember" so the bar
     // colors remain sensible.
     let advertised_theme = match theme.as_str() {
-        "carbon" | "cyan" | "ember" => theme.clone(),
+        "carbon" | "cyan" | "ember" | "marika" => theme.clone(),
         _ => "ember".to_string(),
     };
 

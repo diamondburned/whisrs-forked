@@ -1,17 +1,22 @@
 /* Themes are matched by class:
- *   .whisrs-theme-ember    — default amber "tally light"
+ *   .whisrs-theme-marika   — Marika Aoki forest-jade, mint & chartreuse glow
+ *   .whisrs-theme-ember    — amber "tally light"
  *   .whisrs-theme-carbon   — monochrome terminal
  *   .whisrs-theme-cyan     — cool electric blue
  */
 
 .whisrs-overlay {
-  border-radius: 999px;
-  background-color: rgba(14, 14, 16, 0.92);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-  padding: 0 18px;
-  min-width: 100px;
-  height: 40px;
+  border-radius: 24px;
+  background-color: rgba(9, 21, 16, 0.94);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.65);
+  padding: 12px 24px;
+  min-width: 128px;
+  min-height: 48px;
   transition-duration: 60ms;
+}
+
+.whisrs-overlay-has-text {
+  padding: 14px 26px;
 }
 
 .whisrs-overlay-hidden {
@@ -19,34 +24,65 @@
 }
 
 .whisrs-overlay-bars {
-  spacing: 2px;
+  spacing: 3px;
   align-items: center;
 }
 
 .whisrs-overlay-text {
-  color: #f0edf5;
-  font-size: 13px;
+  color: #daf9e5;
+  font-size: 17px;
   font-weight: 500;
-  margin-left: 12px;
-  max-width: 520px;
+  line-height: 1.42;
+  margin-left: 16px;
+  max-width: 630px;
 }
 
 .whisrs-overlay-bar {
   width: 3px;
-  border-radius: 1.5px;
-  background-color: #f0edf5;
+  border-radius: 2px;
+  background-color: #daf9e5;
   height: 6px;
   min-height: 6px;
-  max-height: 28px;
+  max-height: 30px;
 }
 
-/* Ember (default) — amber recording, soft white transcribing. */
+/* Marika — Forest-Jade surface (#091510 / #0e1f18), Sailor-Uniform Mint (#6ee0b0),
+ * Iris Emerald (#7be173), and Butter-Chartreuse Blonde (#d4ec78) glow.
+ */
+.whisrs-theme-marika {
+  background-color: rgba(9, 21, 16, 0.94);
+  border: 1px solid rgba(110, 224, 176, 0.42);
+  box-shadow: 0 0 24px rgba(110, 224, 176, 0.28), 0 8px 28px rgba(6, 15, 11, 0.82);
+}
+.whisrs-theme-marika.whisrs-overlay-recording {
+  border: 1px solid rgba(110, 224, 176, 0.62);
+  box-shadow: 0 0 28px rgba(110, 224, 176, 0.38), 0 8px 30px rgba(6, 15, 11, 0.85);
+}
+.whisrs-theme-marika.whisrs-overlay-recording .whisrs-overlay-bar {
+  background-color: #6ee0b0;
+  box-shadow: 0 0 8px rgba(110, 224, 176, 0.75);
+}
+.whisrs-theme-marika.whisrs-overlay-transcribing {
+  border: 1px solid rgba(212, 236, 120, 0.58);
+  box-shadow: 0 0 28px rgba(212, 236, 120, 0.34), 0 8px 30px rgba(6, 15, 11, 0.85);
+}
+.whisrs-theme-marika.whisrs-overlay-transcribing .whisrs-overlay-bar {
+  background-color: #d4ec78;
+  box-shadow: 0 0 8px rgba(212, 236, 120, 0.7);
+}
+.whisrs-theme-marika .whisrs-overlay-text {
+  color: #daf9e5;
+}
+
+/* Ember — amber recording, soft white transcribing. */
 .whisrs-theme-ember {
-  border: 1px solid rgba(249, 115, 22, 0.25);
+  background-color: rgba(14, 14, 16, 0.92);
+  border: 1px solid rgba(249, 115, 22, 0.35);
+  box-shadow: 0 0 20px rgba(249, 115, 22, 0.22), 0 8px 28px rgba(0, 0, 0, 0.65);
 }
 .whisrs-theme-ember.whisrs-overlay-recording .whisrs-overlay-bar {
   background-color: #f97316;
-  box-shadow: 0 0 4px rgba(249, 115, 22, 0.5);
+  box-shadow: 0 0 6px rgba(249, 115, 22, 0.6);
 }
 .whisrs-theme-ember.whisrs-overlay-transcribing .whisrs-overlay-bar {
   background-color: #f0edf5;
@@ -54,6 +90,7 @@
 
 /* Carbon — monochrome. */
 .whisrs-theme-carbon {
+  background-color: rgba(14, 14, 16, 0.92);
   border: 1px solid rgba(58, 58, 64, 0.5);
 }
 .whisrs-theme-carbon.whisrs-overlay-recording .whisrs-overlay-bar {
@@ -65,12 +102,13 @@
 
 /* Cyan — electric blue. */
 .whisrs-theme-cyan {
-  border: 1px solid rgba(34, 211, 238, 0.25);
+  border: 1px solid rgba(34, 211, 238, 0.35);
   background-color: rgba(10, 15, 20, 0.92);
+  box-shadow: 0 0 22px rgba(34, 211, 238, 0.25), 0 8px 28px rgba(0, 0, 0, 0.65);
 }
 .whisrs-theme-cyan.whisrs-overlay-recording .whisrs-overlay-bar {
   background-color: #22d3ee;
-  box-shadow: 0 0 4px rgba(34, 211, 238, 0.5);
+  box-shadow: 0 0 6px rgba(34, 211, 238, 0.6);
 }
 .whisrs-theme-cyan.whisrs-overlay-transcribing .whisrs-overlay-bar {
   background-color: #38bdf8;
