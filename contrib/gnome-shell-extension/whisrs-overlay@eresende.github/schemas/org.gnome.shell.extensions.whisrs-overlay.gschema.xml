@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.whisrs-overlay" path="/org/gnome/shell/extensions/whisrs-overlay/">
+    <key name="cancel-dictation" type="as">
+      <default><![CDATA[['Escape']]]></default>
+      <summary>Cancel dictation</summary>
+      <description>Shortcut that runs `whisrs cancel`. It is only grabbed while whisrs is recording or transcribing, so it never interferes with other applications while idle. Set to [] to disable.</description>
+    </key>
+  </schema>
+</schemalist>

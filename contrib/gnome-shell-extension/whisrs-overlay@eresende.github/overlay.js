@@ -1,10 +1,17 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
 import Pango from 'gi://Pango';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
+// Packagers may rewrite this to an absolute path; gnome-shell's PATH is not
+// guaranteed to contain whisrs.
+const WHISRS_BIN = 'whisrs';
+const CANCEL_KEY = 'cancel-dictation';
 
 const DBUS_INTERFACE = 'org.whisrs.Overlay';
 const DBUS_PATH = '/org/whisrs/Overlay';
@@ -44,6 +51,11 @@ const KNOWN_POSITIONS = [
 ];
 
 export class WhisrsOverlayImpl {
+    constructor(settings = null) {
+        this._settings = settings;
+        this._cancelBound = false;
+    }
+
     enable() {
         this._theme = 'mizuki';
         this._placement = 'bottom-center';
@@ -158,6 +170,7 @@ export class WhisrsOverlayImpl {
 
     disable() {
         this._stopAnimation();
+        this._bindCancel(false);
 
         for (const id of [
             this._signalId, this._levelSignalId,
@@ -232,6 +245,32 @@ export class WhisrsOverlayImpl {
             this._actor.add_style_class_name('whisrs-overlay-hidden');
             if (!wasIdle) this._spawnOut();
             this._stopAnimation();
+        }
+
+        this._bindCancel(this._state !== 'idle');
+    }
+
+    // Grab the cancel shortcut only while dictating, so the key (Escape by
+    // default) is swallowed by the shell then and left alone otherwise.
+    _bindCancel(active) {
+        if (!this._settings || active === this._cancelBound) return;
+        if (active) {
+            Main.wm.addKeybinding(
+                CANCEL_KEY, this._settings, Meta.KeyBindingFlags.NONE,
+                Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW,
+                () => this._cancel()
+            );
+        } else {
+            Main.wm.removeKeybinding(CANCEL_KEY);
+        }
+        this._cancelBound = active;
+    }
+
+    _cancel() {
+        try {
+            Gio.Subprocess.new([WHISRS_BIN, 'cancel'], Gio.SubprocessFlags.NONE);
+        } catch (e) {
+            console.error('[whisrs-overlay] Failed to run whisrs cancel:', e);
         }
     }
 

@@ -14,7 +14,13 @@ export default class WhisrsOverlayExtension extends Extension {
             const uri = `${overlayFile.get_uri()}?v=${GLib.get_monotonic_time()}`;
             const {WhisrsOverlayImpl} = await import(uri);
             if (!this._enabled) return;
-            this._impl = new WhisrsOverlayImpl();
+            let settings = null;
+            try {
+                settings = this.getSettings();
+            } catch (e) {
+                console.error('[whisrs-overlay] Cancel shortcut disabled, schema unavailable:', e);
+            }
+            this._impl = new WhisrsOverlayImpl(settings);
             this._impl.enable();
         } catch (e) {
             console.error('[whisrs-overlay] Failed to load overlay.js:', e);

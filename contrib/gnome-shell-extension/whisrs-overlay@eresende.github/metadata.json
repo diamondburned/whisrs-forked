@@ -3,5 +3,6 @@
   "name": "whisrs Overlay",
   "description": "Recording overlay for whisrs on GNOME Wayland.",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
-  "version": 9
+  "settings-schema": "org.gnome.shell.extensions.whisrs-overlay",
+  "version": 10
 }
