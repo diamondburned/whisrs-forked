@@ -72,6 +72,19 @@ impl Palette {
         }
     }
 
+    /// Mizuki Akiyama palette: deep plum surface, rose-pink recording bar,
+    /// lavender transcribing bar, bright magenta speaking bar, pink glow.
+    pub const fn mizuki() -> Self {
+        Self {
+            bg: [235, 22, 10, 26],           // #160A1A @ 92%
+            ring: [115, 240, 122, 184],      // #F07AB8 @ 45%
+            rec_bar: [255, 240, 122, 184],   // #F07AB8 rose-pink
+            trans_bar: [255, 223, 188, 247], // #DFBCF7 lavender
+            speak_bar: [255, 255, 84, 162],  // #FF54A2 bright magenta
+            glow: [96, 240, 122, 184],       // #F07AB8 glow
+        }
+    }
+
     /// The palette of `cfg`'s theme, with `[overlay.colors]` applied when the
     /// theme is `custom`.
     pub fn from_config(cfg: &OverlayConfig) -> Self {
@@ -79,6 +92,7 @@ impl Palette {
             "carbon" => Self::carbon(),
             "cyan" => Self::cyan(),
             "marika" => Self::marika(),
+            "mizuki" => Self::mizuki(),
             "ember" | "custom" => Self::ember(),
             other => {
                 warn!("unknown overlay theme {other:?}, falling back to ember");

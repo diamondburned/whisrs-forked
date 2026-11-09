@@ -37,7 +37,7 @@ const SPAWN_PILL_MIN_H = 4;
 const BARS_GRACE_MS = 80;
 const BARS_FADE_MS = 80;
 
-const KNOWN_THEMES = ['ember', 'carbon', 'cyan', 'marika'];
+const KNOWN_THEMES = ['ember', 'carbon', 'cyan', 'marika', 'mizuki'];
 const KNOWN_POSITIONS = [
     'bottom-left', 'bottom-center', 'bottom-right',
     'top-left', 'top-center', 'top-right',
@@ -45,11 +45,11 @@ const KNOWN_POSITIONS = [
 
 export class WhisrsOverlayImpl {
     enable() {
-        this._theme = 'marika';
+        this._theme = 'mizuki';
         this._placement = 'bottom-center';
 
         this._actor = new St.BoxLayout({
-            style_class: 'whisrs-overlay whisrs-overlay-hidden whisrs-theme-marika',
+            style_class: 'whisrs-overlay whisrs-overlay-hidden whisrs-theme-mizuki',
             vertical: false,
             y_align: Clutter.ActorAlign.CENTER,
             reactive: false,
@@ -187,7 +187,7 @@ export class WhisrsOverlayImpl {
 
     _setTheme(theme) {
         if (!this._actor) return;
-        const next = KNOWN_THEMES.includes(String(theme)) ? String(theme) : 'marika';
+        const next = KNOWN_THEMES.includes(String(theme)) ? String(theme) : 'mizuki';
         if (next === this._theme) return;
         this._actor.remove_style_class_name(`whisrs-theme-${this._theme}`);
         this._actor.add_style_class_name(`whisrs-theme-${next}`);

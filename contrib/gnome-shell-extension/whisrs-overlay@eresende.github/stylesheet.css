@@ -1,4 +1,5 @@
 /* Themes are matched by class:
+ *   .whisrs-theme-mizuki   — Mizuki Akiyama deep plum, rose-pink & lavender glow
  *   .whisrs-theme-marika   — Marika Aoki forest-jade, mint & chartreuse glow
  *   .whisrs-theme-ember    — amber "tally light"
  *   .whisrs-theme-carbon   — monochrome terminal
@@ -7,7 +8,7 @@
 
 .whisrs-overlay {
   border-radius: 24px;
-  background-color: rgba(9, 21, 16, 0.94);
+  background-color: rgba(22, 10, 26, 0.94);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.65);
   padding: 12px 24px;
   min-width: 128px;
@@ -29,7 +30,7 @@
 }
 
 .whisrs-overlay-text {
-  color: #daf9e5;
+  color: #fce7f3;
   font-size: 17px;
   font-weight: 500;
   line-height: 1.42;
@@ -40,10 +41,38 @@
 .whisrs-overlay-bar {
   width: 3px;
   border-radius: 2px;
-  background-color: #daf9e5;
+  background-color: #fce7f3;
   height: 6px;
   min-height: 6px;
   max-height: 30px;
+}
+
+/* Mizuki — Deep Plum surface (#160a1a / #25122b), Rose-Pink (#f07ab8 / #ff54a2),
+ * and Lavender (#dfbcf7 / #b86ce6) glow.
+ */
+.whisrs-theme-mizuki {
+  background-color: rgba(22, 10, 26, 0.94);
+  border: 1px solid rgba(240, 122, 184, 0.45);
+  box-shadow: 0 0 24px rgba(240, 122, 184, 0.30), 0 8px 28px rgba(16, 7, 20, 0.85);
+}
+.whisrs-theme-mizuki.whisrs-overlay-recording {
+  border: 1px solid rgba(255, 84, 162, 0.68);
+  box-shadow: 0 0 28px rgba(240, 122, 184, 0.42), 0 8px 30px rgba(16, 7, 20, 0.88);
+}
+.whisrs-theme-mizuki.whisrs-overlay-recording .whisrs-overlay-bar {
+  background-color: #f07ab8;
+  box-shadow: 0 0 8px rgba(255, 84, 162, 0.78);
+}
+.whisrs-theme-mizuki.whisrs-overlay-transcribing {
+  border: 1px solid rgba(223, 188, 247, 0.62);
+  box-shadow: 0 0 28px rgba(184, 108, 230, 0.38), 0 8px 30px rgba(16, 7, 20, 0.88);
+}
+.whisrs-theme-mizuki.whisrs-overlay-transcribing .whisrs-overlay-bar {
+  background-color: #dfbcf7;
+  box-shadow: 0 0 8px rgba(223, 188, 247, 0.75);
+}
+.whisrs-theme-mizuki .whisrs-overlay-text {
+  color: #fce7f3;
 }
 
 /* Marika — Forest-Jade surface (#091510 / #0e1f18), Sailor-Uniform Mint (#6ee0b0),
